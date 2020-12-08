@@ -217,8 +217,10 @@ receive_loop(nw_connection_t connection)
 {
     nw_connection_receive(connection, 1, UINT32_MAX, ^(dispatch_data_t content, nw_content_context_t context, bool is_complete, nw_error_t receive_error) {
 
+        nw_retain(context);
         dispatch_block_t schedule_next_receive = ^{
             … discussed below …
+            nw_release(context);
         };
 
         if (content != NULL) {
@@ -272,9 +274,10 @@ In `schedule_next_receive` you must handle three cases:
 * Otherwise, start the next asynchronous receive by calling `receive_loop`.
 
 ```objective-c
+nw_retain(context);
 dispatch_block_t schedule_next_receive = ^{
     if (is_complete &&
-        context != NULL && nw_content_context_get_is_final(context)) {
+        (context == NULL || nw_content_context_get_is_final(context))) {
         exit(0);
     }
     if (receive_error == NULL) {
@@ -282,6 +285,7 @@ dispatch_block_t schedule_next_receive = ^{
     } else {
         … error logging …
     }
+    nw_release(context);
 };
 ```
 
@@ -289,7 +293,7 @@ dispatch_block_t schedule_next_receive = ^{
 
 To check for the end of the data stream:
 
-* Generally, you can use the technique shown by `schedule_next_receive`, that is, check both the `is_complete` flag and that the context is marked as final.  This technique works correctly for both TCP and UDP, and thus is necessary for a `netcat` implementation.
+* Generally, you can use the technique shown by `schedule_next_receive`, that is, check both the `is_complete` flag and that the context is marked as final or is not present.  This technique works correctly for both TCP and UDP, and thus is necessary for a `netcat` implementation.
 
 * If you only handle TCP, you can simply test the `is_complete` flag.
 

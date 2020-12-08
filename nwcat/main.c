@@ -216,8 +216,8 @@ create_outbound_connection(const char *name, const char *port)
 																 (g_use_udp ? NWCAT_BONJOUR_SERVICE_UDP_TYPE : NWCAT_BONJOUR_SERVICE_TCP_TYPE),
 																 NWCAT_BONJOUR_SERVICE_DOMAIN) :
 							  nw_endpoint_create_host(name, port));
-
 	nw_parameters_t parameters = NULL;
+
 	nw_parameters_configure_protocol_block_t configure_tls = NW_PARAMETERS_DISABLE_PROTOCOL;
 	if (g_use_tls) {
 		if (g_psk) {
@@ -455,11 +455,12 @@ receive_loop(nw_connection_t connection)
 {
 	nw_connection_receive(connection, 1, UINT32_MAX, ^(dispatch_data_t content, nw_content_context_t context, bool is_complete, nw_error_t receive_error) {
 
+		nw_retain(context);
 		dispatch_block_t schedule_next_receive = ^{
 			// If the context is marked as complete, and is the final context,
 			// we're read-closed.
 			if (is_complete &&
-				context != NULL && nw_content_context_get_is_final(context)) {
+				(context == NULL || nw_content_context_get_is_final(context))) {
 				exit(0);
 			}
 
@@ -467,6 +468,7 @@ receive_loop(nw_connection_t connection)
 			if (receive_error == NULL) {
 				receive_loop(connection);
 			}
+			nw_release(context);
 		};
 
 		if (content != NULL) {
