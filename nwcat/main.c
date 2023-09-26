@@ -11,6 +11,18 @@ nwcat is a basic version of the standard netcat/nc tool that uses Network.framew
 #include <err.h>
 #include <getopt.h>
 
+typedef struct GVSPPacketHeader1{
+    uint16_t    status;
+    uint16_t    blockid;
+    uint8_t     format;
+    uint8_t     packetid[3];
+}GVSP_PACKET_HEADER1;
+
+int g_current_packetid=0;
+int g_current_blockid=0;
+int g_lostpktcount=0;
+int g_rcvPktCount=0;
+
 // Global Options
 char *g_psk = NULL;			// TLS PSK
 char *g_local_port = NULL;	// Local port flag
@@ -427,10 +439,12 @@ create_and_start_listener(char *name, char *port)
 		if (g_inbound_connection != NULL) {
 			// We only support one connection at a time, so if we already
 			// have one, reject the incoming connection.
+            fprintf(stderr, "ERR:have one connection, reject the incoming connection!");
 			nw_connection_cancel(connection);
 		} else {
 			// Accept the incoming connection and start sending
 			// and receiving on it.
+            fprintf(stderr, "accept one connection!");
 			g_inbound_connection = connection;
 			nw_retain(g_inbound_connection);
 
@@ -474,15 +488,36 @@ receive_loop(nw_connection_t connection)
 		if (content != NULL) {
 			// If there is content, write it to stdout asynchronously
 			schedule_next_receive = Block_copy(schedule_next_receive);
-			dispatch_write(STDOUT_FILENO, content, dispatch_get_main_queue(), ^(__unused dispatch_data_t _Nullable data, int stdout_error) {
-				if (stdout_error != 0) {
-					errno = stdout_error;
-					warn("stdout write error");
-				} else {
+//			dispatch_write(STDOUT_FILENO, content, dispatch_get_main_queue(), ^(__unused dispatch_data_t _Nullable data, int stdout_error) {
+//				if (stdout_error != 0) {
+//					errno = stdout_error;
+//					warn("stdout write error");
+//				} else {
+            const void* buf=NULL;
+            size_t bufSize=0;
+            dispatch_data_t d2=dispatch_data_create_map(content, &buf, &bufSize);
+                    //fprintf(stderr, "recv1. count:%zu\n",bufSize);
+            if(buf){
+               const GVSP_PACKET_HEADER1 *gvsphdr=(const GVSP_PACKET_HEADER1 *)buf;
+                int packetid=((gvsphdr->packetid[0]<<16)+(gvsphdr->packetid[1]<<8)+(gvsphdr->packetid[2]));
+                int blockid=ntohs(gvsphdr->blockid);
+                
+                if(packetid>1&&packetid>g_current_packetid&&(packetid-g_current_packetid)>1){
+//                    fprintf(stderr,"lostpacket packetid:%d       g_cur_pkid:%d.\n",packetid,g_current_packetid);
+                    g_lostpktcount+=(packetid-g_current_packetid);
+                }
+                g_current_packetid=packetid;
+                g_current_blockid=blockid;
+                g_rcvPktCount++;
+                if(packetid%1000==0){
+                    printf("rcv:%d lost:%d. loss:%f\n",g_rcvPktCount,g_lostpktcount,((float)g_lostpktcount/(float)g_rcvPktCount));
+                }
+            }
 					schedule_next_receive();
-				}
+//				}
 				Block_release(schedule_next_receive);
-			});
+//			});
+            
 		} else {
 			// Content was NULL, so directly schedule the next receive
 			schedule_next_receive();
