@@ -6,7 +6,9 @@ nwcat is a basic version of the standard netcat/nc tool that uses Network.framew
  It supports TCP and UDP connections and listeners, with TLS/DTLS support.
 */
 
+//nwcat -4 -u -p 56001 -s 169.254.30.155 169.254.30.44 53303
 #include <Network/Network.h>
+//#include <Network/connection.h>
 
 #include <err.h>
 #include <getopt.h>
@@ -467,62 +469,70 @@ create_and_start_listener(char *name, char *port)
 void
 receive_loop(nw_connection_t connection)
 {
-	nw_connection_receive(connection, 1, UINT32_MAX, ^(dispatch_data_t content, nw_content_context_t context, bool is_complete, nw_error_t receive_error) {
-
-		nw_retain(context);
-		dispatch_block_t schedule_next_receive = ^{
-			// If the context is marked as complete, and is the final context,
-			// we're read-closed.
-			if (is_complete &&
-				(context == NULL || nw_content_context_get_is_final(context))) {
-				exit(0);
-			}
-
-			// If there was no error in receiving, request more data
-			if (receive_error == NULL) {
-				receive_loop(connection);
-			}
-			nw_release(context);
-		};
-
-		if (content != NULL) {
-			// If there is content, write it to stdout asynchronously
-			schedule_next_receive = Block_copy(schedule_next_receive);
-//			dispatch_write(STDOUT_FILENO, content, dispatch_get_main_queue(), ^(__unused dispatch_data_t _Nullable data, int stdout_error) {
-//				if (stdout_error != 0) {
-//					errno = stdout_error;
-//					warn("stdout write error");
-//				} else {
-            const void* buf=NULL;
-            size_t bufSize=0;
-            dispatch_data_t d2=dispatch_data_create_map(content, &buf, &bufSize);
-                    //fprintf(stderr, "recv1. count:%zu\n",bufSize);
-            if(buf){
-               const GVSP_PACKET_HEADER1 *gvsphdr=(const GVSP_PACKET_HEADER1 *)buf;
-                int packetid=((gvsphdr->packetid[0]<<16)+(gvsphdr->packetid[1]<<8)+(gvsphdr->packetid[2]));
-                int blockid=ntohs(gvsphdr->blockid);
-                
-                if(packetid>1&&packetid>g_current_packetid&&(packetid-g_current_packetid)>1){
-//                    fprintf(stderr,"lostpacket packetid:%d       g_cur_pkid:%d.\n",packetid,g_current_packetid);
-                    g_lostpktcount+=(packetid-g_current_packetid);
-                }
-                g_current_packetid=packetid;
-                g_current_blockid=blockid;
-                g_rcvPktCount++;
-                if(packetid%1000==0){
-                    printf("rcv:%d lost:%d. loss:%f\n",g_rcvPktCount,g_lostpktcount,((float)g_lostpktcount/(float)g_rcvPktCount));
-                }
-            }
-					schedule_next_receive();
-//				}
-				Block_release(schedule_next_receive);
-//			});
+    nw_connection_batch(connection, ^{
+        for (int i=0; i<10; i++) {
             
-		} else {
-			// Content was NULL, so directly schedule the next receive
-			schedule_next_receive();
-		}
-	});
+        
+        nw_connection_receive_message(connection, ^(dispatch_data_t content, nw_content_context_t context, bool is_complete, nw_error_t receive_error) {
+
+            nw_retain(context);
+            dispatch_block_t schedule_next_receive = ^{
+                // If the context is marked as complete, and is the final context,
+                // we're read-closed.
+                if (is_complete &&
+                    (context == NULL || nw_content_context_get_is_final(context))) {
+                    exit(0);
+                }
+
+                // If there was no error in receiving, request more data
+                if (receive_error == NULL) {
+                    receive_loop(connection);
+                }
+                nw_release(context);
+            };
+
+            if (content != NULL) {
+                // If there is content, write it to stdout asynchronously
+                schedule_next_receive = Block_copy(schedule_next_receive);
+    //            dispatch_write(STDOUT_FILENO, content, dispatch_get_main_queue(), ^(__unused dispatch_data_t _Nullable data, int stdout_error) {
+    //                if (stdout_error != 0) {
+    //                    errno = stdout_error;
+    //                    warn("stdout write error");
+    //                } else {
+                const void* buf=NULL;
+                size_t bufSize=0;
+                dispatch_data_t d2=dispatch_data_create_map(content, &buf, &bufSize);
+                       // fprintf(stderr, "recv1. count:%zu\n",bufSize);
+                if(buf){
+                   const GVSP_PACKET_HEADER1 *gvsphdr=(const GVSP_PACKET_HEADER1 *)buf;
+                    int packetid=((gvsphdr->packetid[0]<<16)+(gvsphdr->packetid[1]<<8)+(gvsphdr->packetid[2]));
+                    int blockid=ntohs(gvsphdr->blockid);
+                    
+                    if(packetid>1&&packetid>g_current_packetid&&g_current_packetid>0&&(packetid-g_current_packetid)>1){
+                        fprintf(stderr,"lostpacket blkid:%d packetid:%d       g_cur_pkid:%d.\n",blockid,packetid,g_current_packetid);
+                        g_lostpktcount+=(packetid-g_current_packetid);
+                    }
+                    g_current_packetid=packetid;
+                    g_current_blockid=blockid;
+                    g_rcvPktCount++;
+                    //printf("packetid:%d.\n",packetid);
+                    //if(packetid%500==0){
+                       // printf("pktid:%d rcv:%d lost:%d. loss:%f\n",packetid,g_rcvPktCount,g_lostpktcount,((float)g_lostpktcount/(float)g_rcvPktCount));
+                    //}
+                }
+                        schedule_next_receive();
+    //                }
+                    Block_release(schedule_next_receive);
+    //            });
+                
+            } else {
+                // Content was NULL, so directly schedule the next receive
+                schedule_next_receive();
+            }
+        });
+        }
+    });
+	
 }
 
 /*
@@ -575,7 +585,7 @@ void
 start_send_receive_loop(nw_connection_t connection)
 {
 	// Start reading from stdin
-	send_loop(connection);
+	//send_loop(connection);
 
 	// Start reading from connection
 	receive_loop(connection);
