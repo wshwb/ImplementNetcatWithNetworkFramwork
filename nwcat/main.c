@@ -585,7 +585,7 @@ void
 start_send_receive_loop(nw_connection_t connection)
 {
 	// Start reading from stdin
-	//send_loop(connection);
+	// send_loop(connection);
 
 	// Start reading from connection
 	receive_loop(connection);
